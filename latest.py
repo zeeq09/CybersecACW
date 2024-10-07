@@ -93,7 +93,7 @@ def encode_audio(audio_path, payload_text, output_path, lsb_count):
 
     # Prepare the message
     binary_payload = ''.join([format(ord(char), '08b') for char in payload])
-    binary_payload += '#####'  # End marker
+    binary_payload += '1111111111111110'  # End marker
 
     max_bits_to_hide = total_samples * lsb_count
     if len(binary_payload) > max_bits_to_hide:
@@ -155,14 +155,14 @@ def decode_audio(audio_path, lsb_count):
         extracted_bits += bits
 
     # Convert bits to bytes
-    message_bytes = [extracted_bits[i:i + 8] for i in range(0, len(extracted_bits), 8)]
-    decoded_message = ""
-    for byte in message_bytes:
-        decoded_message += chr(int(byte, 2))
-        if decoded_message[-5:] == "#####":
+    payload = ""
+    for i in range(0, len(extracted_bits), 8):
+        byte = extracted_bits[i:i + 8]
+        if byte == '11111111':  # End of data (delimiter)
             break
+        payload += chr(int(byte, 2))
 
-    return decoded_message[:-5]
+    return payload
 
 
 def to_bin(data):
