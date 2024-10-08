@@ -1,3 +1,4 @@
+import os
 import struct
 import tkinter as tk
 from tkinter import filedialog, messagebox, Label, Entry, Button, Frame, ttk
@@ -367,11 +368,24 @@ class SteganographyApp(TkinterDnD.Tk):
         self.extract_button.grid(row=0, column=1, padx=10)
 
     def on_media_drop(self, event):
-        self.media_file = event.data  # Store the media file path
-        self.media_label.config(text=self.media_file)
+        self.media_file = event.data.strip()  # Strip any extra spaces or newlines
+
+        # In case the file path is enclosed in curly braces, remove them
+        if self.media_file.startswith('{') and self.media_file.endswith('}'):
+            self.media_file = self.media_file[1:-1]
+
+        # Update the label to display the media file name or path
+        self.media_label.config(text=os.path.basename(self.media_file))
 
     def on_payload_drop(self, event):
-        self.payload_file = event.data
+        # Extract the file path from the event data
+        self.payload_file = event.data.strip()  # Strip to remove any extra whitespace or newlines
+
+        # In case the file path is enclosed in curly braces, you can remove them
+        if self.payload_file.startswith('{') and self.payload_file.endswith('}'):
+            self.payload_file = self.payload_file[1:-1]
+
+        # Now, get the file extension using os.path
         if self.payload_file.lower().endswith('.txt'):
             self.payload_label.config(text="Payload Loaded")
         else:
