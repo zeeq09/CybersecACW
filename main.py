@@ -303,37 +303,75 @@ def decode_video(video_path, num_lsb):
     return decoded_message
 
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event=None):
+        if self.tooltip_window or not self.text:
+            return
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(tw, text=self.text, justify='center',
+                         background="#ffffe0", relief='solid', borderwidth=1,
+                         font=("Verdana", "8", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tooltip(self, event=None):
+        tw = self.tooltip_window
+        self.tooltip_window = None
+        if tw:
+            tw.destroy()
+
+
 class SteganographyApp(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Steganography Tool")
-        self.geometry("700x600")
-        self.configure(bg='#f0f0f0')
+        self.geometry("720x480")
+
+        # Dark Gray for the background
+        self.configure(bg='#4B4B4B')
 
         # Header
-        self.header_label = Label(self, text="Steganography Tool", font=("Helvetica", 18, "bold"), bg='#f0f0f0')
+        self.header_label = Label(self, text="Steganography Tool", font=("Verdana", 18, "bold"), bg='#4B4B4B',
+                                  fg='white')
         self.header_label.pack(pady=20)
 
         # Drag-and-Drop Frame for Media File
-        self.media_frame = Frame(self, bg='#e0e0e0', width=600, height=50, relief="sunken")
+        self.media_frame = Frame(self, bg='#4B4B4B', width=600, height=50, relief="sunken")
         self.media_frame.pack(pady=5)
         self.media_frame.pack_propagate(False)
 
-        self.media_label = Label(self.media_frame, text="Drag & Drop Media File Here", font=("Helvetica", 12),
-                                 bg='#e0e0e0')
+        self.media_label = Label(self.media_frame, text="Drag & Drop Media File Here", font=("Verdana", 12),
+                                 bg='#D3D3D3', fg='black')
         self.media_label.pack(fill=tk.BOTH, expand=True)
 
         self.media_frame.drop_target_register(DND_FILES)
         self.media_frame.dnd_bind('<<Drop>>', self.on_media_drop)
 
+        ToolTip(self.media_label, "Drag your media file here (PNG, WAV, AVI)")
+
         # Drag-and-Drop Frame for Payload File
-        self.payload_frame = Frame(self, bg='#e0e0e0', width=600, height=50, relief="sunken")
+        self.payload_frame = Frame(self, bg='#4B4B4B', width=600, height=50, relief="sunken")
         self.payload_frame.pack(pady=5)
         self.payload_frame.pack_propagate(False)
 
         self.payload_label = Label(self.payload_frame, text="Drag & Drop Payload File Here (Text File)",
-                                   font=("Helvetica", 12), bg='#e0e0e0')
+                                   font=("Verdana", 12), bg='#D3D3D3', fg='black')
         self.payload_label.pack(fill=tk.BOTH, expand=True)
+
+        ToolTip(self.payload_label, "Drag your text payload file here (txt files only)")
 
         self.payload_frame.drop_target_register(DND_FILES)
         self.payload_frame.dnd_bind('<<Drop>>', self.on_payload_drop)
@@ -343,29 +381,35 @@ class SteganographyApp(TkinterDnD.Tk):
         self.payload_file = ""
 
         # Frame for user input (message and LSBs)
-        input_frame = Frame(self, bg='#f0f0f0')
+        input_frame = Frame(self, bg='#4B4B4B')
         input_frame.pack(pady=20)
 
         # LSB slider
-        self.lsb_label = Label(input_frame, text="Select number of LSBs to use:", font=("Helvetica", 12), bg='#f0f0f0')
+        self.lsb_label = Label(input_frame, text="Select number of LSBs to use:", font=("Verdana", 12), bg='#4B4B4B',
+                               fg='white')
         self.lsb_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
         self.lsb_slider = tk.Scale(input_frame, from_=1, to=8, orient=tk.HORIZONTAL, length=200, font=("Helvetica", 12),
-                                   bg='#f0f0f0', troughcolor='#dc3545', relief="flat")
-        self.lsb_slider.set(3)
+                                   bg='#4B4B4B', fg='white', troughcolor='#008080', relief="flat")
+        self.lsb_slider.set(1)
         self.lsb_slider.grid(row=0, column=1, padx=10, pady=10)
+        ToolTip(self.lsb_slider, "Set the number of Least Significant Bits (LSBs) to use for steganography.")
 
         # Frame for buttons
-        button_frame = Frame(self, bg='#f0f0f0')
+        button_frame = Frame(self, bg='#4B4B4B')
         button_frame.pack(pady=20)
 
         # Buttons for hiding and extracting
         self.hide_button = Button(button_frame, text="Hide Message", command=self.threaded_hide_message,
-                                  font=("Helvetica", 12), bg='#28a745', fg='white', relief="raised")
+                                  font=("Verdana", 12), bg='#008080', fg='white', relief="raised")
         self.hide_button.grid(row=0, column=0, padx=10)
+        self.hide_button.bind("<Enter>", lambda event: self.hide_button.config(bg='#007070'))  # On hover
+        self.hide_button.bind("<Leave>", lambda event: self.hide_button.config(bg='#008080'))  # On leave
 
         self.extract_button = Button(button_frame, text="Extract Message", command=self.threaded_extract_message,
-                                     font=("Helvetica", 12), bg='#dc3545', fg='white', relief="raised")
+                                     font=("Verdana", 12), bg='#008080', fg='white', relief="raised")
         self.extract_button.grid(row=0, column=1, padx=10)
+        self.extract_button.bind("<Enter>", lambda event: self.extract_button.config(bg='#007070'))  # On hover
+        self.extract_button.bind("<Leave>", lambda event: self.extract_button.config(bg='#008080'))  # On leave
 
     def on_media_drop(self, event):
         self.media_file = event.data.strip()  # Strip any extra spaces or newlines
