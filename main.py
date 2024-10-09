@@ -303,6 +303,66 @@ def decode_video(video_path, num_lsb):
     return decoded_message
 
 
+def image_to_image_encode(cover_image_path, hidden_image_path, output_image_path, num_lsb):
+    cover_image = Image.open(cover_image_path)
+    hidden_image = Image.open(hidden_image_path)
+
+    # Resize the hidden image to fit the cover image if necessary
+    if cover_image.size != hidden_image.size:
+        hidden_image = hidden_image.resize(cover_image.size)
+
+    cover_pixels = np.array(cover_image)
+    hidden_pixels = np.array(hidden_image)
+
+    # Iterate over each pixel of the image
+    for i in range(hidden_pixels.shape[0]):
+        for j in range(hidden_pixels.shape[1]):
+            for channel in range(3):  # For R, G, B channels
+                cover_pixel = cover_pixels[i][j][channel]
+                hidden_pixel = hidden_pixels[i][j][channel]
+
+                # Get the most significant bits from the hidden pixel
+                hidden_bits = format(hidden_pixel, '08b')[:num_lsb]
+
+                # Get the least significant bits from the cover pixel
+                cover_bits = format(cover_pixel, '08b')[:8 - num_lsb]
+
+                # Combine them to form the new pixel value
+                new_pixel_bits = cover_bits + hidden_bits
+                cover_pixels[i][j][channel] = int(new_pixel_bits, 2)
+
+    # Save the stego image
+    stego_image = Image.fromarray(cover_pixels)
+    stego_image.save(output_image_path)
+    return stego_image
+
+
+def image_to_image_decode(stego_image_path, num_lsb):
+    stego_image = Image.open(stego_image_path)
+    stego_pixels = np.array(stego_image)
+
+    # Create an empty array for the hidden image
+    hidden_pixels = np.zeros_like(stego_pixels)
+
+    # Iterate over each pixel to extract the hidden image
+    for i in range(stego_pixels.shape[0]):
+        for j in range(stego_pixels.shape[1]):
+            for channel in range(3):  # For R, G, B channels
+                stego_pixel = stego_pixels[i][j][channel]
+
+                # Get the least significant bits from the stego pixel
+                hidden_bits = format(stego_pixel, '08b')[-num_lsb:]
+
+                # Pad the rest with zeros to form the hidden pixel
+                hidden_pixel_bits = hidden_bits + '0' * (8 - num_lsb)
+                hidden_pixels[i][j][channel] = int(hidden_pixel_bits, 2)
+
+    # Save and return the decoded hidden image
+    hidden_image = Image.fromarray(hidden_pixels)
+    hidden_image.show()
+    return hidden_image
+
+
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
@@ -362,19 +422,27 @@ class SteganographyApp(TkinterDnD.Tk):
 
         ToolTip(self.media_label, "Drag your media file here (PNG, WAV, AVI)")
 
+        self.media_remove_button = Button(self, text="Remove Media", command=self.remove_media, bg='#008080',
+                                          font=("Verdana", 8), fg='white')
+        self.media_remove_button.pack(pady=5)
+
         # Drag-and-Drop Frame for Payload File
         self.payload_frame = Frame(self, bg='#4B4B4B', width=600, height=50, relief="sunken")
         self.payload_frame.pack(pady=5)
         self.payload_frame.pack_propagate(False)
 
-        self.payload_label = Label(self.payload_frame, text="Drag & Drop Payload File Here (Text File)",
+        self.payload_label = Label(self.payload_frame, text="Drag & Drop Payload File Here",
                                    font=("Verdana", 12), bg='#D3D3D3', fg='black')
         self.payload_label.pack(fill=tk.BOTH, expand=True)
 
-        ToolTip(self.payload_label, "Drag your text payload file here (txt files only)")
+        ToolTip(self.payload_label, "Drag your payload file here")
 
         self.payload_frame.drop_target_register(DND_FILES)
         self.payload_frame.dnd_bind('<<Drop>>', self.on_payload_drop)
+
+        self.payload_remove_button = Button(self, text="Remove Payload", command=self.remove_payload, bg='#008080',
+                                            font=("Verdana", 8), fg='white')
+        self.payload_remove_button.pack(pady=5)
 
         # Initialize variables to hold file paths
         self.media_file = ""
@@ -419,7 +487,7 @@ class SteganographyApp(TkinterDnD.Tk):
             self.media_file = self.media_file[1:-1]
 
         # Update the label to display the media file name or path
-        self.media_label.config(text=os.path.basename(self.media_file))
+        self.media_label.config(text="File Loaded: " + os.path.basename(self.media_file))
 
     def on_payload_drop(self, event):
         # Extract the file path from the event data
@@ -430,10 +498,20 @@ class SteganographyApp(TkinterDnD.Tk):
             self.payload_file = self.payload_file[1:-1]
 
         # Now, get the file extension using os.path
-        if self.payload_file.lower().endswith('.txt'):
-            self.payload_label.config(text="Payload Loaded")
+        if self.payload_file.lower().endswith(('.txt', '.png', '.jpg', '.jpeg', '.gif')):
+            self.payload_label.config(text="Payload Loaded: " + os.path.basename(self.payload_file))
         else:
-            messagebox.showerror("Error", "Please drop a valid text file.")
+            messagebox.showerror("Error", "Please drop a valid text or image file.")
+
+    def remove_media(self):
+        """Clear the media file and reset the label."""
+        self.media_file = ""
+        self.media_label.config(text="Drag & Drop Media File Here")
+
+    def remove_payload(self):
+        """Clear the payload file and reset the label."""
+        self.payload_file = ""
+        self.payload_label.config(text="Drag & Drop Payload File Here")
 
     def threaded_hide_message(self):
         threading.Thread(target=self.hide_message).start()
@@ -442,19 +520,33 @@ class SteganographyApp(TkinterDnD.Tk):
         media_file = self.media_file  # Get media file from instance variable
         payload_message = self.payload_file  # Get payload message from instance variable
         lsb_count = self.lsb_slider.get()
-        output_path = media_file.split('.')[0] + '_output.' + media_file.split('.')[-1]
+        output_path = media_file.split('.')[0] + '_output.' + media_file.split('.')[-1]  # Define output_path
 
-        if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-            encode_image(media_file, payload_message, output_path, lsb_count)
-        elif media_file.lower().endswith(('.mp4', '.avi', '.mov')):
-            encode_video(media_file, payload_message, output_path, lsb_count)
-        elif media_file.lower().endswith(('.mp3', '.wav')):
-            encode_audio(media_file, payload_message, output_path, lsb_count)
+        # Check if payload is an image or a text file
+        if payload_message.lower().endswith('.txt'):
+            # Handle text payload encoding
+            if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                encode_image(media_file, payload_message, output_path, lsb_count)
+            elif media_file.lower().endswith(('.mp4', '.avi', '.mov')):
+                encode_video(media_file, payload_message, output_path, lsb_count)
+            elif media_file.lower().endswith(('.mp3', '.wav')):
+                encode_audio(media_file, payload_message, output_path, lsb_count)
+            else:
+                messagebox.showerror("Error", "Unsupported media file format.")
+                return
+            messagebox.showinfo("Success", "Message hidden successfully in " + output_path)
+
+        elif payload_message.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+            # Handle image payload encoding
+            if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                image_to_image_encode(media_file, payload_message, output_path, lsb_count)
+            else:
+                messagebox.showerror("Error", "Image payload can only be hidden inside image media files.")
+                return
+            messagebox.showinfo("Success", "Image hidden successfully in " + output_path)
+
         else:
-            messagebox.showerror("Error", "Unsupported media file format.")
-            return
-
-        messagebox.showinfo("Success", "Message hidden successfully in " + output_path)
+            messagebox.showerror("Error", "Unsupported payload file format.")
 
     def threaded_extract_message(self):
         threading.Thread(target=self.extract_message).start()
@@ -464,7 +556,9 @@ class SteganographyApp(TkinterDnD.Tk):
         lsb_count = self.lsb_slider.get()
         hidden_message = None
 
-        if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+        if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')) and not self.payload_file:
+            hidden_message = image_to_image_decode(media_file, lsb_count)
+        elif media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
             hidden_message = decode_image(media_file, lsb_count)
         elif media_file.lower().endswith(('.mp4', '.avi', '.mov')):
             hidden_message = decode_video(media_file, lsb_count)
@@ -478,9 +572,6 @@ class SteganographyApp(TkinterDnD.Tk):
             messagebox.showinfo("Hidden Message", hidden_message)
         else:
             messagebox.showinfo("No Message", "No hidden message found.")
-
-            # Reset the progress bar after completion
-            self.progress['value'] = 0
 
 
 if __name__ == "__main__":
