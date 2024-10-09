@@ -565,7 +565,7 @@ class SteganographyApp(TkinterDnD.Tk):
         elif media_file.lower().endswith(('.mp3', '.wav')):
             hidden_message = decode_audio(media_file, lsb_count)
         else:
-            messagebox.showerror("Error", "Unsupported media file format.")
+            messagebox.showerror("Error", "Unsupported media file format")
             return
 
         if hidden_message:
