@@ -1,7 +1,7 @@
 import os
 import struct
 import tkinter as tk
-from tkinter import filedialog, messagebox, Label, Entry, Button, Frame, ttk
+from tkinter import filedialog, messagebox, Label, Button, Frame
 from tqdm import tqdm
 import cv2
 from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -9,45 +9,47 @@ import numpy as np
 from PIL import Image
 import wave
 import threading
+import math
 
 
 def encode_image(image_path, payload_text, output_path, num_lsb):
     image = Image.open(image_path)
-    img_data = np.array(image)
+    # Convert the image to a NumPy array with int64 data type to allow more bit spacesss
+    img_data = np.array(image, dtype=np.int64)
     with open(payload_text, 'r') as file:
         payload = file.read()
 
-    # Convert payload to binary and add delimiter
+    # Convert payload to binary and add delimiter to mark the end of the binary payload!
     payload_bin = ''.join(format(ord(char), '08b') for char in payload) + '1111111111111110'
-
     # Calculate maximum bytes to encode
     max_bytes = img_data.size * num_lsb // 8
     if len(payload_bin) > max_bytes:
-        raise ValueError("Payload size exceeds cover image capacity.")
+        messagebox.showerror("Error", "Payload too large for the selected file.")
+    else:
+        # THis the start of the encoding process
+        data_index = 0
+        for row in img_data:
+            for pixel in row:
+                for channel in range(3):  # R, G, B channels
+                    if data_index < len(payload_bin):
+                        pixel[channel] = (pixel[channel] & ~((1 << num_lsb) - 1)) | int(
+                            payload_bin[data_index:data_index + num_lsb], 2)
+                        data_index += num_lsb
+                    else:
+                        break
 
-    data_index = 0
-    for row in img_data:
-        for pixel in row:
-            for channel in range(3):  # R, G, B channels
-                if data_index < len(payload_bin):
-                    pixel[channel] = (pixel[channel] & ~((1 << num_lsb) - 1)) | int(
-                        payload_bin[data_index:data_index + num_lsb], 2)
-                    data_index += num_lsb
-                else:
-                    break
-
-    stego_image = Image.fromarray(img_data)
-    stego_image.save(output_path)
+        # Convert back to uint8 before saving, since images use 8-bit values
+        stego_image = Image.fromarray(img_data.astype(np.uint8))
+        stego_image.save(output_path)
     return stego_image
 
 
-# Function to decode text from an image with delimiter
 def decode_image(image_path, num_lsb):
     image = Image.open(image_path)
     img_data = np.array(image)
 
     payload_bin = ""
-    total_pixels = img_data.shape[0] * img_data.shape[1]  # Total number of pixels
+    total_pixels = img_data.shape[0] * img_data.shape[1]
 
     for row in tqdm(img_data, desc="Decoding Image", total=img_data.shape[0]):
         for pixel in row:
@@ -61,16 +63,14 @@ def decode_image(image_path, num_lsb):
         if byte == '11111111':  # End of data (delimiter)
             break
         payload += chr(int(byte, 2))
-
     return payload
 
 
-# Function to encode text into an audio file (MP3 and WAV supported)
 def encode_audio(audio_path, payload_text, output_path, lsb_count):
     with open(payload_text, 'r') as file:
         payload = file.read()
 
-    """Hides secret data inside an audio file using LSB."""
+    # STart of encoding process
     song = wave.open(audio_path, mode='rb')
     n_frames = song.getnframes()
     n_channels = song.getnchannels()
@@ -98,31 +98,31 @@ def encode_audio(audio_path, payload_text, output_path, lsb_count):
 
     max_bits_to_hide = total_samples * lsb_count
     if len(binary_payload) > max_bits_to_hide:
-        raise ValueError("Payload too large for the selected audio file.")
+        messagebox.showerror("Error", "Payload too large for the selected file.")
+    else:
+        # Modify the LSBs of audio samples
+        data_index = 0
+        for i in range(len(samples)):
+            if data_index + lsb_count <= len(binary_payload):
+                # Modify the LSBs
+                sample = samples[i]
+                # Clear the least significant bits
+                sample &= ~((1 << lsb_count) - 1)
+                # Set the new least significant bits
+                bits_to_hide = binary_payload[data_index:data_index + lsb_count]
+                sample |= int(bits_to_hide, 2)
+                samples[i] = sample
+                data_index += lsb_count
+            else:
+                break
 
-    # Modify the LSBs of audio samples
-    data_index = 0
-    for i in range(len(samples)):
-        if data_index + lsb_count <= len(binary_payload):
-            # Modify the LSBs
-            sample = samples[i]
-            # Clear the least significant bits
-            sample &= ~((1 << lsb_count) - 1)
-            # Set the new least significant bits
-            bits_to_hide = binary_payload[data_index:data_index + lsb_count]
-            sample |= int(bits_to_hide, 2)
-            samples[i] = sample
-            data_index += lsb_count
-        else:
-            break
+        # Pack samples back to bytes
+        frames_modified = struct.pack(fmt, *samples)
 
-    # Pack samples back to bytes
-    frames_modified = struct.pack(fmt, *samples)
-
-    # Write modified frames to new audio file
-    with wave.open(output_path, 'wb') as fd:
-        fd.setparams(params)
-        fd.writeframes(frames_modified)
+        # Write modified frames to new audio file
+        with wave.open(output_path, 'wb') as fd:
+            fd.setparams(params)
+            fd.writeframes(frames_modified)
 
 
 def decode_audio(audio_path, lsb_count):
@@ -166,39 +166,11 @@ def decode_audio(audio_path, lsb_count):
     return payload
 
 
-def to_bin(data):
-    if isinstance(data, str):
-        return ''.join([format(ord(i), "08b") for i in data])
-    elif isinstance(data, bytes) or isinstance(data, np.ndarray):
-        return [format(i, "08b") for i in data]
-    elif isinstance(data, int) or isinstance(data, np.uint8):
-        return format(data, "08b")
-    else:
-        raise TypeError("Unsupported data type.")
-
-
-# Embedding/Extraction unified function
-def modify_bits(frame, bits=None, lsb_count=1, mode='hide'):
-    flat_frame = frame.flatten()
-    num_pixels = len(flat_frame)
-
-    if mode == 'hide':
-        # Hide bits in the LSB of the frame
-        for i in range(len(bits)):
-            if i < num_pixels:
-                flat_frame[i] = (flat_frame[i] & ~((1 << lsb_count) - 1)) | int(bits[i], 2)
-    elif mode == 'reveal':
-        # Reveal bits from the LSB of the frame (not used in encoding)
-        pass
-
-    return flat_frame.reshape(frame.shape)
-
-
-# Function to encode text into an MP4 video file
 def encode_video(video_path, payload_text, output_path, num_lsb):
     video = cv2.VideoCapture(video_path)
-    fourcc = cv2.VideoWriter_fourcc(*'FFV1')  # Use lossless FFV1 codec
-    out = cv2.VideoWriter(output_path, fourcc, 30.0, (int(video.get(3)), int(video.get(4))))
+    fourcc = cv2.VideoWriter_fourcc(*'FFV1')  # Use FFV1 codec as its a lossless encoder!
+    out = cv2.VideoWriter(output_path, fourcc, video.get(cv2.CAP_PROP_FPS),
+                          (int(video.get(3)), int(video.get(4))))
 
     with open(payload_text, 'r') as file:
         payload = file.read()
@@ -207,55 +179,55 @@ def encode_video(video_path, payload_text, output_path, num_lsb):
     binary_payload = ''.join([format(ord(char), '08b') for char in payload])
     binary_payload += '1111111111111110'  # End marker
 
-    print(f"Binary Payload (to encode): {binary_payload}")
-
     data_index = 0  # Track the position in the binary payload
     total_bits = len(binary_payload)
-    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))  # Get total number of frames
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # Progress bar with the total number of frames
-    with tqdm(total=total_frames, desc="Encoding video", unit="frame") as pbar:
-        while video.isOpened():
-            ret, frame = video.read()
-            if not ret:
-                break
+    # Calculate maximum capacity
+    frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_pixels_per_frame = frame_width * frame_height * 3  # 3 channels (B, G, R)
+    bits_per_frame = total_pixels_per_frame * num_lsb
+    max_capacity = total_frames * bits_per_frame
 
-            flat_frame = frame.flatten()
+    if total_bits > max_capacity:
+        messagebox.showerror("Error", "Payload too large for the selected video file.")
+    else:
+        # Progress bar with the total number of frames
+        with tqdm(total=total_frames, desc="Encoding video", unit="frame") as pbar:
+            while video.isOpened():
+                ret, frame = video.read()
+                if not ret:
+                    break
 
-            for i in range(len(flat_frame)):
-                if data_index < total_bits:
-                    # Embed the specified number of LSBs from the payload
-                    for bit_pos in range(num_lsb):  # Modify multiple LSBs (based on the number of LSBs specified)
-                        if data_index < total_bits:
-                            flat_frame[i] = (flat_frame[i] & ~(1 << bit_pos)) | (
-                                    int(binary_payload[data_index]) << bit_pos)
-                            data_index += 1
-                        else:
-                            break
+                flat_frame = frame.flatten()
 
-            # Reshape the flat frame back to the original shape and write it to the output
-            modified_frame = flat_frame.reshape(frame.shape)
-            out.write(modified_frame)
+                for i in range(len(flat_frame)):
+                    if data_index < total_bits:
+                        # Embed the specified number of LSBs from the payload
+                        for bit_pos in range(num_lsb):
+                            if data_index < total_bits:
+                                mask = ~(1 << bit_pos) & 0xFF  # Ensure mask is within 0-255
+                                bit = int(binary_payload[data_index])
+                                flat_frame[i] = (flat_frame[i] & mask) | (bit << bit_pos)
+                                data_index += 1
+                            else:
+                                break
 
-            pbar.update(1)  # Update the progress bar for each frame
+                # Reshape the flat frame back to the original shape and write it to the output
+                modified_frame = flat_frame.reshape(frame.shape)
+                out.write(modified_frame)
 
-    video.release()
-    out.release()
+                pbar.update(1)  # Update the progress bar for each frame
+
+        video.release()
+        out.release()
     return output_path
-
-
-def extract_bits_from_frame(frame, num_lsb):
-    frame_bits = ""
-    for row in frame:
-        for pixel in row:
-            for channel in range(3):
-                frame_bits += format(pixel[channel] & ((1 << num_lsb) - 1), '0' + str(num_lsb) + 'b')
-    return frame_bits
 
 
 def decode_video(video_path, num_lsb):
     video = cv2.VideoCapture(video_path)
-    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))  # Get total number of frames
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     batch_size = 10
     binary_message = []
     end_marker = '1111111111111110'  # End marker
@@ -264,7 +236,7 @@ def decode_video(video_path, num_lsb):
     # Progress bar with the total number of frames
     with tqdm(total=total_frames, desc="Decoding video", unit="frame") as pbar:
         while video.isOpened():
-            frames = []  # Collect a batch of frames
+            frames = []
             for _ in range(batch_size):
                 ret, frame = video.read()
                 if not ret:
@@ -279,11 +251,11 @@ def decode_video(video_path, num_lsb):
 
                 for pixel in flat_frame:
                     # Extract the specified number of LSBs from each pixel
-                    for bit_pos in range(num_lsb):  # Extract multiple LSBs (based on the number of LSBs specified)
-                        bit = (pixel >> bit_pos) & 1  # Extract the bit at the current position
+                    for bit_pos in range(num_lsb):
+                        bit = (pixel >> bit_pos) & 1
                         bit_buffer += str(bit)
 
-                        if len(bit_buffer) == 8:  # Once we have 8 bits, we form a byte
+                        if len(bit_buffer) == 8:
                             binary_message.append(bit_buffer)
                             bit_buffer = ""
 
@@ -301,6 +273,169 @@ def decode_video(video_path, num_lsb):
     # If no end marker is found, return the partial decoded message
     decoded_message = ''.join([chr(int(b, 2)) for b in binary_message])
     return decoded_message
+
+
+def encode_video_with_file(video_path, payload_file, output_path, num_lsb):
+    video = cv2.VideoCapture(video_path)
+    fourcc = cv2.VideoWriter_fourcc(*'FFV1')
+    out = cv2.VideoWriter(output_path, fourcc, video.get(cv2.CAP_PROP_FPS),
+                          (int(video.get(3)), int(video.get(4))))
+
+    # Read the payload file as binary
+    with open(payload_file, 'rb') as file:
+        payload_data = file.read()
+
+    # Get the payload file extension (e.g., '.pdf')
+    payload_extension = os.path.splitext(payload_file)[1]
+    payload_extension_bytes = payload_extension.encode('utf-8')
+    payload_extension_size = len(payload_extension_bytes)
+
+    # Convert the extension size to 8 bits
+    extension_size_bits = format(payload_extension_size, '08b')
+    # Convert the extension bytes to bits
+    extension_bits = ''.join([format(byte, '08b') for byte in payload_extension_bytes])
+    # Get the size of the payload
+    payload_size = len(payload_data)
+    # Convert the size to 64 bits (8 bytes)
+    payload_size_bits = format(payload_size, '064b')
+    # Convert the payload data to bits
+    payload_bits = ''.join([format(byte, '08b') for byte in payload_data])
+    # Combine the extension size, extension bits, payload size, and payload bits
+    binary_payload = extension_size_bits + extension_bits + payload_size_bits + payload_bits
+
+    data_index = 0
+    total_bits = len(binary_payload)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Calculate maximum capacity
+    frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_pixels_per_frame = frame_width * frame_height * 3  # 3 channels (B, G, R)
+    bits_per_frame = total_pixels_per_frame * num_lsb
+    max_capacity = total_frames * bits_per_frame
+
+    if total_bits > max_capacity:
+        raise ValueError("Payload too large for the selected video file.")
+    else:
+        with tqdm(total=total_frames, desc="Encoding video", unit="frame") as pbar:
+            while video.isOpened():
+                ret, frame = video.read()
+                if not ret:
+                    break
+
+                flat_frame = frame.flatten()
+
+                for i in range(len(flat_frame)):
+                    if data_index < total_bits:
+                        for bit_pos in range(num_lsb):
+                            if data_index < total_bits:
+                                mask = ~(1 << bit_pos) & 0xFF
+                                bit = int(binary_payload[data_index])
+                                flat_frame[i] = (flat_frame[i] & mask) | (bit << bit_pos)
+                                data_index += 1
+                            else:
+                                break
+                    else:
+                        break
+
+                modified_frame = flat_frame.reshape(frame.shape)
+                out.write(modified_frame)
+
+                pbar.update(1)
+
+        video.release()
+        out.release()
+    return output_path
+
+
+def decode_video_with_file(stego_video_path, num_lsb):
+    video = cv2.VideoCapture(stego_video_path)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_pixels_per_frame = frame_width * frame_height * 3
+    bits_per_frame = total_pixels_per_frame * num_lsb
+
+    binary_data = ''
+    extension_size = None
+    payload_extension = ''
+    payload_size = None
+    total_bits_needed = None
+
+    with tqdm(total=total_frames, desc="Decoding video", unit="frame") as pbar:
+        frame_count = 0
+        while video.isOpened():
+            ret, frame = video.read()
+            if not ret:
+                break
+
+            flat_frame = frame.flatten()
+
+            for i in range(len(flat_frame)):
+                for bit_pos in range(num_lsb):
+                    bit = (flat_frame[i] >> bit_pos) & 1
+                    binary_data += str(bit)
+
+                    # Read extension size (first 8 bits)
+                    if extension_size is None and len(binary_data) == 8:
+                        extension_size = int(binary_data[:8], 2)
+                        print(f"Extension size: {extension_size} bytes")
+
+                    # Read extension bits
+                    elif extension_size is not None and len(binary_data) == 8 + (extension_size * 8):
+                        extension_bits = binary_data[8:8 + (extension_size * 8)]
+                        for j in range(0, len(extension_bits), 8):
+                            byte = extension_bits[j:j + 8]
+                            payload_extension += chr(int(byte, 2))
+                        print(f"Payload extension: {payload_extension}")
+
+                    # Read payload size (next 64 bits after extension)
+                    elif payload_size is None and extension_size is not None and len(binary_data) == 8 + (
+                            extension_size * 8) + 64:
+                        payload_size = int(binary_data[8 + (extension_size * 8):8 + (extension_size * 8) + 64], 2)
+                        total_payload_bits = payload_size * 8
+                        total_bits_needed = 8 + (extension_size * 8) + 64 + total_payload_bits
+                        print(f"Payload size: {payload_size} bytes")
+                        # Check if total_bits_needed is realistic
+                        max_capacity = (total_frames * bits_per_frame)
+                        if total_bits_needed > max_capacity:
+                            video.release()
+                            raise ValueError("The payload size exceeds the capacity of the stego video.")
+
+                    # Break out once we've read all the bits we need
+                    if total_bits_needed and len(binary_data) >= total_bits_needed:
+                        break
+                else:
+                    continue  # Continue if inner loop wasn't broken
+                break  # Break outer loop if inner loop was broken
+
+            if total_bits_needed and len(binary_data) >= total_bits_needed:
+                break
+
+            frame_count += 1
+            pbar.update(1)
+
+    video.release()
+
+    if payload_size is None or not payload_extension:
+        video.release()
+        raise ValueError("Failed to extract payload size or extension from the video.")
+
+    # Extract the payload data
+    start_index = 8 + (extension_size * 8) + 64
+    payload_data_bits = binary_data[start_index:start_index + payload_size * 8]
+    payload_bytes = bytearray()
+    for i in range(0, len(payload_data_bits), 8):
+        byte = payload_data_bits[i:i + 8]
+        payload_bytes.append(int(byte, 2))
+
+    # Save the extracted file with the correct extension
+    output_file = stego_video_path + "_extracted" + payload_extension
+    with open(output_file, 'wb') as f:
+        f.write(payload_bytes)
+
+    print(f"Extraction complete. File saved as {output_file}")
+    return output_file
 
 
 def image_to_image_encode(cover_image_path, hidden_image_path, output_image_path, num_lsb):
@@ -420,7 +555,7 @@ class SteganographyApp(TkinterDnD.Tk):
         self.media_frame.drop_target_register(DND_FILES)
         self.media_frame.dnd_bind('<<Drop>>', self.on_media_drop)
 
-        ToolTip(self.media_label, "Drag your media file here (PNG, WAV, AVI)")
+        ToolTip(self.media_label, "Drag your media file here (PNG, WAV, MP4)")
 
         self.media_remove_button = Button(self, text="Remove Media", command=self.remove_media, bg='#008080',
                                           font=("Verdana", 8), fg='white')
@@ -490,18 +625,15 @@ class SteganographyApp(TkinterDnD.Tk):
         self.media_label.config(text="File Loaded: " + os.path.basename(self.media_file))
 
     def on_payload_drop(self, event):
-        # Extract the file path from the event data
-        self.payload_file = event.data.strip()  # Strip to remove any extra whitespace or newlines
-
-        # In case the file path is enclosed in curly braces, you can remove them
+        self.payload_file = event.data.strip()
         if self.payload_file.startswith('{') and self.payload_file.endswith('}'):
             self.payload_file = self.payload_file[1:-1]
 
-        # Now, get the file extension using os.path
-        if self.payload_file.lower().endswith(('.txt', '.png', '.jpg', '.jpeg', '.gif')):
+        # Allow various files
+        if self.payload_file.lower().endswith(('.txt', '.png', '.jpg', '.jpeg', '.pdf', '.docx', '.xlsx')):
             self.payload_label.config(text="Payload Loaded: " + os.path.basename(self.payload_file))
         else:
-            messagebox.showerror("Error", "Please drop a valid text or image file.")
+            messagebox.showerror("Error", "Please drop a valid text, image, or document file.")
 
     def remove_media(self):
         """Clear the media file and reset the label."""
@@ -517,61 +649,98 @@ class SteganographyApp(TkinterDnD.Tk):
         threading.Thread(target=self.hide_message).start()
 
     def hide_message(self):
-        media_file = self.media_file  # Get media file from instance variable
-        payload_message = self.payload_file  # Get payload message from instance variable
+        media_file = self.media_file
+        payload_message = self.payload_file
         lsb_count = self.lsb_slider.get()
-        output_path = media_file.split('.')[0] + '_output.' + media_file.split('.')[-1]  # Define output_path
+        output_path = media_file.split('.')[0] + '_output.' + media_file.split('.')[-1]
 
-        # Check if payload is an image or a text file
-        if payload_message.lower().endswith('.txt'):
-            # Handle text payload encoding
-            if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                encode_image(media_file, payload_message, output_path, lsb_count)
-            elif media_file.lower().endswith(('.mp4', '.avi', '.mov')):
-                encode_video(media_file, payload_message, output_path, lsb_count)
-            elif media_file.lower().endswith(('.mp3', '.wav')):
-                encode_audio(media_file, payload_message, output_path, lsb_count)
+        try:
+            if payload_message.lower().endswith('.txt'):
+                if media_file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    encode_image(media_file, payload_message, output_path, lsb_count)
+                    messagebox.showinfo("Success", f"Text file hidden successfully in {output_path}")
+                elif media_file.lower().endswith(('.mp3', '.wav')):
+                    encode_audio(media_file, payload_message, output_path, lsb_count)
+                    messagebox.showinfo("Success", f"Text file hidden successfully in {output_path}")
+                elif media_file.lower().endswith('.avi'):
+                    encode_video(media_file, payload_message, output_path, lsb_count)
+                    messagebox.showinfo("Success", f"Text file hidden successfully in {output_path}")
+                else:
+                    messagebox.showerror("Error", "Unsupported media file format for text payload.")
+            elif payload_message.lower().endswith(('.png', '.jpg', '.jpeg')):
+                if media_file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    image_to_image_encode(media_file, payload_message, output_path, lsb_count)
+                    messagebox.showinfo("Success", f"Image file hidden successfully in {output_path}")
+                else:
+                    messagebox.showerror("Error", "Image payload can only be hidden inside image media files.")
+            elif payload_message.lower().endswith(('.pdf', '.docx', '.xlsx')):
+                if media_file.lower().endswith('.avi'):
+                    encode_video_with_file(media_file, payload_message, output_path, lsb_count)
+                    messagebox.showinfo("Success", f"File hidden successfully in {output_path}")
+                else:
+                    messagebox.showerror("Error", "Document payload can only be hidden inside video media files.")
             else:
-                messagebox.showerror("Error", "Unsupported media file format.")
-                return
-            messagebox.showinfo("Success", "Message hidden successfully in " + output_path)
-
-        elif payload_message.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-            # Handle image payload encoding
-            if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                image_to_image_encode(media_file, payload_message, output_path, lsb_count)
-            else:
-                messagebox.showerror("Error", "Image payload can only be hidden inside image media files.")
-                return
-            messagebox.showinfo("Success", "Image hidden successfully in " + output_path)
-
-        else:
-            messagebox.showerror("Error", "Unsupported payload file format.")
+                messagebox.showerror("Error", "Unsupported payload file format.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Hiding failed: Try a another file")
 
     def threaded_extract_message(self):
         threading.Thread(target=self.extract_message).start()
 
     def extract_message(self):
-        media_file = self.media_file  # Get media file from instance variable
+        media_file = self.media_file
         lsb_count = self.lsb_slider.get()
-        hidden_message = None
 
-        if media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')) and not self.payload_file:
-            hidden_message = image_to_image_decode(media_file, lsb_count)
-        elif media_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-            hidden_message = decode_image(media_file, lsb_count)
-        elif media_file.lower().endswith(('.mp4', '.avi', '.mov')):
-            hidden_message = decode_video(media_file, lsb_count)
+        if media_file.lower().endswith(('.mp4', '.avi', '.mov')):
+            try:
+                # First, try to extract as a file
+                extracted_file = decode_video_with_file(media_file, lsb_count)
+                if os.path.exists(extracted_file):
+                    messagebox.showinfo("Success", f"File extracted successfully to {extracted_file}")
+                else:
+                    raise ValueError("No file extracted.")
+            except ValueError as ve:
+                # If extraction as a file fails, try to extract as a text message
+                try:
+                    hidden_message = decode_video(media_file, lsb_count)
+                    if hidden_message:
+                        messagebox.showinfo("Hidden Message", hidden_message)
+                    else:
+                        messagebox.showinfo("No Message", "No hidden message found.")
+                except Exception as e2:
+                    messagebox.showerror("Error", f"Extraction failed: {str(e2)}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Extraction failed: {str(e)}")
+        elif media_file.lower().endswith(('.png', '.jpg', '.jpeg')) and not self.payload_file:
+            try:
+                hidden_image = image_to_image_decode(media_file, lsb_count)
+                if hidden_image:
+                    messagebox.showinfo("Success", "Hidden image extracted and displayed.")
+                else:
+                    messagebox.showinfo("No Image", "No hidden image found.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Extraction failed: {str(e)}")
+        elif media_file.lower().endswith(('.png', '.jpg', '.jpeg')):
+            try:
+                hidden_message = decode_image(media_file, lsb_count)
+                if hidden_message:
+                    messagebox.showinfo("Hidden Message", hidden_message)
+                else:
+                    messagebox.showinfo("No Message", "No hidden message found.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Extraction failed: {str(e)}")
         elif media_file.lower().endswith(('.mp3', '.wav')):
-            hidden_message = decode_audio(media_file, lsb_count)
+            try:
+                hidden_message = decode_audio(media_file, lsb_count)
+                if hidden_message:
+                    messagebox.showinfo("Hidden Message", hidden_message)
+                else:
+                    messagebox.showinfo("No Message", "No hidden message found.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Extraction failed: {str(e)}")
         else:
             messagebox.showerror("Error", "Unsupported media file format")
             return
-
-        if hidden_message:
-            messagebox.showinfo("Hidden Message", hidden_message)
-        else:
-            messagebox.showinfo("No Message", "No hidden message found.")
 
 
 if __name__ == "__main__":

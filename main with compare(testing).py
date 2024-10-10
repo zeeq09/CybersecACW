@@ -17,6 +17,7 @@ import numpy as np
 import wave
 from PIL import Image
 
+
 def compare_media(file1, file2):
     """
     Compare two media files to check if they are identical or different.
@@ -81,6 +82,7 @@ def compare_images(image1_path, image2_path):
         diff_image_pil.show()
         return False
 
+
 def compare_audio(audio1_path, audio2_path):
     """
     Compare two audio files by comparing their waveforms.
@@ -111,6 +113,7 @@ def compare_audio(audio1_path, audio2_path):
         messagebox.showinfo("Comparison Result", f"The audio files differ. Waveform difference: {diff}.")
         return False
 
+
 def compare_videos(video1_path, video2_path):
     """
     Compare two video files frame by frame.
@@ -121,8 +124,8 @@ def compare_videos(video1_path, video2_path):
 
     # Ensure videos have the same properties
     if cap1.get(cv2.CAP_PROP_FRAME_COUNT) != cap2.get(cv2.CAP_PROP_FRAME_COUNT) or \
-       cap1.get(cv2.CAP_PROP_FRAME_WIDTH) != cap2.get(cv2.CAP_PROP_FRAME_WIDTH) or \
-       cap1.get(cv2.CAP_PROP_FRAME_HEIGHT) != cap2.get(cv2.CAP_PROP_FRAME_HEIGHT):
+            cap1.get(cv2.CAP_PROP_FRAME_WIDTH) != cap2.get(cv2.CAP_PROP_FRAME_WIDTH) or \
+            cap1.get(cv2.CAP_PROP_FRAME_HEIGHT) != cap2.get(cv2.CAP_PROP_FRAME_HEIGHT):
         messagebox.showerror("Video Comparison Result", "Videos have different dimensions or frame counts.")
         return False
 
